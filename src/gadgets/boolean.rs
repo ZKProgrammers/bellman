@@ -198,7 +198,7 @@ impl AllocatedBit {
         let mut result_value = None;
 
         let result_var = cs.alloc(
-            || "and not result",
+            || "and_not result",
             || {
                 if *a.value.get()? & !*b.value.get()? {
                     result_value = Some(true);
@@ -215,7 +215,7 @@ impl AllocatedBit {
         // Constrain (a) * (1 - b) = (c), ensuring c is 1 iff
         // a is true and b is false, and otherwise c is 0.
         cs.enforce(
-            || "and not constraint",
+            || "and_not constraint",
             |lc| lc + a.variable,
             |lc| lc + CS::one() - b.variable,
             |lc| lc + result_var,
@@ -633,6 +633,73 @@ impl Boolean {
         }
     }
 
+    /// Perform AND NOT over two boolean operands
+    pub fn and_not<'a, Scalar, CS>(cs: CS, a: &'a Self, b: &'a Self) -> Result<Self, SynthesisError>
+    where
+        Scalar: PrimeField,
+        CS: ConstraintSystem<Scalar>,
+    {
+        match (a, b) {
+            // false AND NOT x is always false
+            (&Boolean::Constant(false), _) | (_, &Boolean::Constant(true)) => {
+                Ok(Boolean::Constant(false))
+            }
+            // true AND NOT x is always (NOT x)
+            (&Boolean::Constant(true), x) => Ok(x.clone().not()),
+            // x AND NOT false is always x
+            (x, &Boolean::Constant(false)) => Ok(x.clone()),
+            // a AND NOT (NOT b) = a and b
+            (&Boolean::Is(ref a), &Boolean::Not(ref b)) => {
+                Ok(Boolean::Is(AllocatedBit::and(cs, a, b)?))
+            }
+            // (NOT a) AND NOT b = a nor b
+            (&Boolean::Not(ref a), &Boolean::Is(ref b)) => {
+                Ok(Boolean::Is(AllocatedBit::nor(cs, a, b)?))
+            }
+            // (NOT a) AND NOT (NOT b) = b and_not a
+            (&Boolean::Not(ref a), &Boolean::Not(ref b)) => {
+                Ok(Boolean::Is(AllocatedBit::and_not(cs, b, a)?))
+            }
+            // a AND b
+            (&Boolean::Is(ref a), &Boolean::Is(ref b)) => {
+                Ok(Boolean::Is(AllocatedBit::and_not(cs, a, b)?))
+            }
+        }
+    }
+
+    /// Perform NOR over two boolean operands
+    /// Calculates `(NOT a) AND (NOT b)`.
+    pub fn nor<'a, Scalar, CS>(cs: CS, a: &'a Self, b: &'a Self) -> Result<Self, SynthesisError>
+    where
+        Scalar: PrimeField,
+        CS: ConstraintSystem<Scalar>,
+    {
+        match (a, b) {
+            // true NOR x is always false
+            (&Boolean::Constant(true), _) | (_, &Boolean::Constant(true)) => {
+                Ok(Boolean::Constant(false))
+            }
+            // false NOR x is always (NOT x)
+            (&Boolean::Constant(false), x) | (x, &Boolean::Constant(false)) => Ok(x.clone().not()),
+            // (NOT a) NOR b = a and_not b
+            (&Boolean::Not(ref a), &Boolean::Is(ref b)) => {
+                Ok(Boolean::Is(AllocatedBit::and_not(cs, a, b)?))
+            }
+            // a NOR (NOT b) = b and_not a
+            (&Boolean::Is(ref a), &Boolean::Not(ref b)) => {
+                Ok(Boolean::Is(AllocatedBit::and_not(cs, b, a)?))
+            }
+            // (NOT a) NOR (NOT b) = a and b
+            (&Boolean::Not(ref a), &Boolean::Not(ref b)) => {
+                Ok(Boolean::Is(AllocatedBit::and(cs, a, b)?))
+            }
+            // a NOR b
+            (&Boolean::Is(ref a), &Boolean::Is(ref b)) => {
+                Ok(Boolean::Is(AllocatedBit::nor(cs, a, b)?))
+            }
+        }
+    }
+
     /// Computes (a and b) xor ((not a) and c)
     pub fn sha256_ch<'a, Scalar, CS>(
         mut cs: CS,
@@ -972,7 +1039,7 @@ mod test {
                 assert!(cs.get("a/boolean") == if *a_val { Field::one() } else { Field::zero() });
                 assert!(cs.get("b/boolean") == if *b_val { Field::one() } else { Field::zero() });
                 assert!(
-                    cs.get("and not result")
+                    cs.get("and_not result")
                         == if *a_val & !*b_val {
                             Field::one()
                         } else {
@@ -982,7 +1049,7 @@ mod test {
 
                 // Invert the result and check if the constraint system is still satisfied
                 cs.set(
-                    "and not result",
+                    "and_not result",
                     if *a_val & !*b_val {
                         Field::zero()
                     } else {
@@ -1580,7 +1647,7 @@ mod test {
                         OperandType::NegatedAllocatedTrue,
                         Boolean::Is(ref v),
                     ) => {
-                        assert!(cs.get("and not result") == Field::zero());
+                        assert!(cs.get("and_not result") == Field::zero());
                         assert_eq!(v.value, Some(false));
                     }
                     (
@@ -1588,7 +1655,7 @@ mod test {
                         OperandType::NegatedAllocatedFalse,
                         Boolean::Is(ref v),
                     ) => {
-                        assert!(cs.get("and not result") == Field::one());
+                        assert!(cs.get("and_not result") == Field::one());
                         assert_eq!(v.value, Some(true));
                     }
 
@@ -1616,7 +1683,7 @@ mod test {
                         OperandType::NegatedAllocatedTrue,
                         Boolean::Is(ref v),
                     ) => {
-                        assert!(cs.get("and not result") == Field::zero());
+                        assert!(cs.get("and_not result") == Field::zero());
                         assert_eq!(v.value, Some(false));
                     }
                     (
@@ -1624,7 +1691,7 @@ mod test {
                         OperandType::NegatedAllocatedFalse,
                         Boolean::Is(ref v),
                     ) => {
-                        assert!(cs.get("and not result") == Field::zero());
+                        assert!(cs.get("and_not result") == Field::zero());
                         assert_eq!(v.value, Some(false));
                     }
 
@@ -1639,7 +1706,7 @@ mod test {
                         OperandType::AllocatedTrue,
                         Boolean::Is(ref v),
                     ) => {
-                        assert!(cs.get("and not result") == Field::zero());
+                        assert!(cs.get("and_not result") == Field::zero());
                         assert_eq!(v.value, Some(false));
                     }
                     (
@@ -1647,7 +1714,7 @@ mod test {
                         OperandType::AllocatedFalse,
                         Boolean::Is(ref v),
                     ) => {
-                        assert!(cs.get("and not result") == Field::zero());
+                        assert!(cs.get("and_not result") == Field::zero());
                         assert_eq!(v.value, Some(false));
                     }
                     (
@@ -1678,7 +1745,7 @@ mod test {
                         OperandType::AllocatedTrue,
                         Boolean::Is(ref v),
                     ) => {
-                        assert!(cs.get("and not result") == Field::one());
+                        assert!(cs.get("and_not result") == Field::one());
                         assert_eq!(v.value, Some(true));
                     }
                     (
@@ -1686,7 +1753,7 @@ mod test {
                         OperandType::AllocatedFalse,
                         Boolean::Is(ref v),
                     ) => {
-                        assert!(cs.get("and not result") == Field::zero());
+                        assert!(cs.get("and_not result") == Field::zero());
                         assert_eq!(v.value, Some(false));
                     }
                     (
@@ -1770,8 +1837,16 @@ mod test {
                     (OperandType::True, OperandType::False, Boolean::Constant(true)) => {}
                     (OperandType::True, OperandType::AllocatedTrue, Boolean::Constant(true)) => {}
                     (OperandType::True, OperandType::AllocatedFalse, Boolean::Constant(true)) => {}
-                    (OperandType::True, OperandType::NegatedAllocatedTrue, Boolean::Constant(true)) => {}
-                    (OperandType::True, OperandType::NegatedAllocatedFalse, Boolean::Constant(true)) => {}
+                    (
+                        OperandType::True,
+                        OperandType::NegatedAllocatedTrue,
+                        Boolean::Constant(true),
+                    ) => {}
+                    (
+                        OperandType::True,
+                        OperandType::NegatedAllocatedFalse,
+                        Boolean::Constant(true),
+                    ) => {}
 
                     (OperandType::False, OperandType::True, Boolean::Constant(true)) => {}
                     (OperandType::False, OperandType::False, Boolean::Constant(false)) => {}
@@ -1779,11 +1854,7 @@ mod test {
                         assert!(cs.get("b/boolean") == Field::one());
                         assert_eq!(v.value, Some(true));
                     }
-                    (
-                        OperandType::False,
-                        OperandType::AllocatedFalse,
-                        Boolean::Is(ref v),
-                    ) => {
+                    (OperandType::False, OperandType::AllocatedFalse, Boolean::Is(ref v)) => {
                         assert!(cs.get("b/boolean") == Field::zero());
                         assert_eq!(v.value, Some(false));
                     }
@@ -1816,11 +1887,7 @@ mod test {
                         assert!(cs.get("nor result") == Field::zero());
                         assert_eq!(v.value, Some(false));
                     }
-                    (
-                        OperandType::AllocatedTrue,
-                        OperandType::False,
-                        Boolean::Is(ref v),
-                    ) => {
+                    (OperandType::AllocatedTrue, OperandType::False, Boolean::Is(ref v)) => {
                         assert!(cs.get("a/boolean") == Field::one());
                         assert_eq!(v.value, Some(true));
                     }
@@ -1860,12 +1927,9 @@ mod test {
                         assert!(cs.get("nor result") == Field::zero());
                         assert_eq!(v.value, Some(false));
                     }
-                    (OperandType::AllocatedFalse, OperandType::False, Boolean::Constant(false)) => {}
-                    (
-                        OperandType::AllocatedFalse,
-                        OperandType::False,
-                        Boolean::Is(ref v),
-                    ) => {
+                    (OperandType::AllocatedFalse, OperandType::False, Boolean::Constant(false)) => {
+                    }
+                    (OperandType::AllocatedFalse, OperandType::False, Boolean::Is(ref v)) => {
                         assert!(cs.get("a/boolean") == Field::zero());
                         assert_eq!(v.value, Some(false));
                     }
@@ -1992,6 +2056,556 @@ mod test {
                     _ => {
                         panic!(
                             "unexpected behavior at {:?} OR {:?} = {:?}",
+                            first_operand, second_operand, c,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_boolean_and_not() {
+        let variants = [
+            OperandType::True,
+            OperandType::False,
+            OperandType::AllocatedTrue,
+            OperandType::AllocatedFalse,
+            OperandType::NegatedAllocatedTrue,
+            OperandType::NegatedAllocatedFalse,
+        ];
+
+        for first_operand in variants.iter().cloned() {
+            for second_operand in variants.iter().cloned() {
+                let mut cs = TestConstraintSystem::<Scalar>::new();
+
+                let a;
+                let b;
+
+                {
+                    let mut dyn_construct = |operand, name| {
+                        let cs = cs.namespace(|| name);
+
+                        match operand {
+                            OperandType::True => Boolean::constant(true),
+                            OperandType::False => Boolean::constant(false),
+                            OperandType::AllocatedTrue => {
+                                Boolean::from(AllocatedBit::alloc(cs, Some(true)).unwrap())
+                            }
+                            OperandType::AllocatedFalse => {
+                                Boolean::from(AllocatedBit::alloc(cs, Some(false)).unwrap())
+                            }
+                            OperandType::NegatedAllocatedTrue => {
+                                Boolean::from(AllocatedBit::alloc(cs, Some(true)).unwrap()).not()
+                            }
+                            OperandType::NegatedAllocatedFalse => {
+                                Boolean::from(AllocatedBit::alloc(cs, Some(false)).unwrap()).not()
+                            }
+                        }
+                    };
+
+                    a = dyn_construct(first_operand, "a");
+                    b = dyn_construct(second_operand, "b");
+                }
+
+                let c = Boolean::and_not(&mut cs, &a, &b).unwrap();
+
+                assert!(cs.is_satisfied());
+
+                match (first_operand, second_operand, c.clone()) {
+                    (OperandType::True, OperandType::True, Boolean::Constant(false)) => {}
+                    (OperandType::True, OperandType::False, Boolean::Constant(true)) => {}
+                    (OperandType::True, OperandType::AllocatedTrue, Boolean::Constant(false)) => {}
+                    (OperandType::True, OperandType::AllocatedFalse, Boolean::Constant(true)) => {}
+                    (
+                        OperandType::True,
+                        OperandType::NegatedAllocatedTrue,
+                        Boolean::Constant(true),
+                    ) => {}
+                    (
+                        OperandType::True,
+                        OperandType::NegatedAllocatedFalse,
+                        Boolean::Constant(false),
+                    ) => {}
+
+                    (OperandType::True, OperandType::AllocatedTrue, Boolean::Not(ref v)) => {
+                        //Not(AllocatedTrue)
+                        assert!(cs.get("b/boolean") == Field::one());
+                        assert_eq!(v.value, Some(true));
+                    }
+                    (OperandType::True, OperandType::AllocatedFalse, Boolean::Not(ref v)) => {
+                        //Not(AllocatedFalse)
+                        assert!(cs.get("b/boolean") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (OperandType::True, OperandType::NegatedAllocatedTrue, Boolean::Is(ref v)) => {
+                        assert!(cs.get("b/boolean") == Field::one());
+                        assert_eq!(v.value, Some(true));
+                    }
+                    (OperandType::True, OperandType::NegatedAllocatedFalse, Boolean::Is(ref v)) => {
+                        assert!(cs.get("b/boolean") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+
+                    (OperandType::False, OperandType::True, Boolean::Constant(false)) => {}
+                    (OperandType::False, OperandType::False, Boolean::Constant(false)) => {}
+                    (OperandType::False, OperandType::AllocatedTrue, Boolean::Constant(false)) => {}
+                    (OperandType::False, OperandType::AllocatedFalse, Boolean::Constant(false)) => {
+                    }
+                    (
+                        OperandType::False,
+                        OperandType::NegatedAllocatedTrue,
+                        Boolean::Constant(false),
+                    ) => {}
+                    (
+                        OperandType::False,
+                        OperandType::NegatedAllocatedFalse,
+                        Boolean::Constant(false),
+                    ) => {}
+
+                    (OperandType::AllocatedTrue, OperandType::True, Boolean::Constant(false)) => {}
+                    (
+                        OperandType::AllocatedTrue,
+                        OperandType::AllocatedTrue,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and_not result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (OperandType::AllocatedTrue, OperandType::False, Boolean::Is(ref v)) => {
+                        assert!(cs.get("a/boolean") == Field::one());
+                        assert_eq!(v.value, Some(true));
+                    }
+                    (
+                        OperandType::AllocatedTrue,
+                        OperandType::AllocatedFalse,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and_not result") == Field::one());
+                        assert_eq!(v.value, Some(true));
+                    }
+                    (
+                        OperandType::AllocatedTrue,
+                        OperandType::NegatedAllocatedTrue,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and result") == Field::one());
+                        assert_eq!(v.value, Some(true));
+                    }
+                    (
+                        OperandType::AllocatedTrue,
+                        OperandType::NegatedAllocatedFalse,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+
+                    (OperandType::AllocatedFalse, OperandType::True, Boolean::Constant(false)) => {}
+                    (OperandType::AllocatedFalse, OperandType::False, Boolean::Is(ref v)) => {
+                        assert!(cs.get("a/boolean") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (
+                        OperandType::AllocatedFalse,
+                        OperandType::AllocatedTrue,
+                        Boolean::Is(ref v),
+                    ) => {
+                        //Not(true)
+                        assert!(cs.get("and_not result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (
+                        OperandType::AllocatedFalse,
+                        OperandType::AllocatedFalse,
+                        Boolean::Is(ref v),
+                    ) => {
+                        //Not(true)
+                        assert!(cs.get("and_not result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (
+                        OperandType::AllocatedFalse,
+                        OperandType::NegatedAllocatedTrue,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (
+                        OperandType::AllocatedFalse,
+                        OperandType::NegatedAllocatedFalse,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+
+                    (
+                        OperandType::NegatedAllocatedTrue,
+                        OperandType::True,
+                        Boolean::Constant(false),
+                    ) => {}
+                    (
+                        OperandType::NegatedAllocatedTrue,
+                        OperandType::False,
+                        Boolean::Not(ref v),
+                    ) => {
+                        //Not(true)
+                        assert!(cs.get("a/boolean") == Field::one());
+                        assert_eq!(v.value, Some(true));
+                    }
+                    (
+                        OperandType::NegatedAllocatedTrue,
+                        OperandType::AllocatedTrue,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("nor result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (
+                        OperandType::NegatedAllocatedTrue,
+                        OperandType::AllocatedFalse,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("nor result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (
+                        OperandType::NegatedAllocatedTrue,
+                        OperandType::NegatedAllocatedTrue,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and_not result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (
+                        OperandType::NegatedAllocatedTrue,
+                        OperandType::NegatedAllocatedFalse,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and_not result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+
+                    (
+                        OperandType::NegatedAllocatedFalse,
+                        OperandType::True,
+                        Boolean::Constant(false),
+                    ) => {}
+                    (
+                        OperandType::NegatedAllocatedFalse,
+                        OperandType::False,
+                        Boolean::Not(ref v),
+                    ) => {
+                        //Not(false)
+                        assert!(cs.get("a/boolean") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (
+                        OperandType::NegatedAllocatedFalse,
+                        OperandType::AllocatedTrue,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("nor result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (
+                        OperandType::NegatedAllocatedFalse,
+                        OperandType::AllocatedFalse,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("nor result") == Field::one());
+                        assert_eq!(v.value, Some(true));
+                    }
+                    (
+                        OperandType::NegatedAllocatedFalse,
+                        OperandType::NegatedAllocatedTrue,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and_not result") == Field::one());
+                        assert_eq!(v.value, Some(true));
+                    }
+                    (
+                        OperandType::NegatedAllocatedFalse,
+                        OperandType::NegatedAllocatedFalse,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and_not result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+
+                    _ => {
+                        panic!(
+                            "unexpected behavior at {:?} AND NOT {:?} = {:?}",
+                            first_operand, second_operand, c,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_boolean_nor() {
+        let variants = [
+            OperandType::True,
+            OperandType::False,
+            OperandType::AllocatedTrue,
+            OperandType::AllocatedFalse,
+            OperandType::NegatedAllocatedTrue,
+            OperandType::NegatedAllocatedFalse,
+        ];
+
+        for first_operand in variants.iter().cloned() {
+            for second_operand in variants.iter().cloned() {
+                let mut cs = TestConstraintSystem::<Scalar>::new();
+
+                let a;
+                let b;
+
+                {
+                    let mut dyn_construct = |operand, name| {
+                        let cs = cs.namespace(|| name);
+
+                        match operand {
+                            OperandType::True => Boolean::constant(true),
+                            OperandType::False => Boolean::constant(false),
+                            OperandType::AllocatedTrue => {
+                                Boolean::from(AllocatedBit::alloc(cs, Some(true)).unwrap())
+                            }
+                            OperandType::AllocatedFalse => {
+                                Boolean::from(AllocatedBit::alloc(cs, Some(false)).unwrap())
+                            }
+                            OperandType::NegatedAllocatedTrue => {
+                                Boolean::from(AllocatedBit::alloc(cs, Some(true)).unwrap()).not()
+                            }
+                            OperandType::NegatedAllocatedFalse => {
+                                Boolean::from(AllocatedBit::alloc(cs, Some(false)).unwrap()).not()
+                            }
+                        }
+                    };
+
+                    a = dyn_construct(first_operand, "a");
+                    b = dyn_construct(second_operand, "b");
+                }
+
+                let c = Boolean::nor(&mut cs, &a, &b).unwrap();
+
+                assert!(cs.is_satisfied());
+
+                match (first_operand, second_operand, c.clone()) {
+                    (OperandType::True, OperandType::True, Boolean::Constant(false)) => {}
+                    (OperandType::True, OperandType::False, Boolean::Constant(false)) => {}
+                    (OperandType::True, OperandType::AllocatedTrue, Boolean::Constant(false)) => {}
+                    (OperandType::True, OperandType::AllocatedFalse, Boolean::Constant(false)) => {}
+                    (
+                        OperandType::True,
+                        OperandType::NegatedAllocatedTrue,
+                        Boolean::Constant(false),
+                    ) => {}
+                    (
+                        OperandType::True,
+                        OperandType::NegatedAllocatedFalse,
+                        Boolean::Constant(false),
+                    ) => {}
+
+                    (OperandType::False, OperandType::True, Boolean::Constant(false)) => {}
+                    (OperandType::False, OperandType::False, Boolean::Constant(true)) => {}
+
+                    (OperandType::False, OperandType::AllocatedTrue, Boolean::Not(ref v)) => {
+                        //Not(true)
+                        assert!(cs.get("b/boolean") == Field::one());
+                        assert_eq!(v.value, Some(true));
+                    }
+                    (OperandType::False, OperandType::AllocatedFalse, Boolean::Not(ref v)) => {
+                        //Not(false)
+                        assert!(cs.get("b/boolean") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (OperandType::False, OperandType::NegatedAllocatedTrue, Boolean::Is(ref v)) => {
+                        assert!(cs.get("b/boolean") == Field::one());
+                        assert_eq!(v.value, Some(true));
+                    }
+                    (
+                        OperandType::False,
+                        OperandType::NegatedAllocatedFalse,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("b/boolean") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+
+                    (OperandType::AllocatedTrue, OperandType::True, Boolean::Constant(false)) => {}
+                    (OperandType::AllocatedTrue, OperandType::False, Boolean::Constant(false)) => {}
+                    (OperandType::AllocatedTrue, OperandType::False, Boolean::Not(ref v)) => {
+                        //Not(true)
+                        assert!(cs.get("a/boolean") == Field::one());
+                        assert_eq!(v.value, Some(true));
+                    }
+                    (
+                        OperandType::AllocatedTrue,
+                        OperandType::AllocatedTrue,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("nor result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (
+                        OperandType::AllocatedTrue,
+                        OperandType::AllocatedFalse,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("nor result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (
+                        OperandType::AllocatedTrue,
+                        OperandType::NegatedAllocatedTrue,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and_not result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (
+                        OperandType::AllocatedTrue,
+                        OperandType::NegatedAllocatedFalse,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and_not result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+
+                    (OperandType::AllocatedFalse, OperandType::True, Boolean::Constant(false)) => {}
+                    (OperandType::AllocatedFalse, OperandType::False, Boolean::Not(ref v)) => {
+                        //Not(false)
+                        assert!(cs.get("a/boolean") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (
+                        OperandType::AllocatedFalse,
+                        OperandType::AllocatedTrue,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("nor result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (
+                        OperandType::AllocatedFalse,
+                        OperandType::AllocatedFalse,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("nor result") == Field::one());
+                        assert_eq!(v.value, Some(true));
+                    }
+                    (
+                        OperandType::AllocatedFalse,
+                        OperandType::NegatedAllocatedTrue,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and_not result") == Field::one());
+                        assert_eq!(v.value, Some(true));
+                    }
+                    (
+                        OperandType::AllocatedFalse,
+                        OperandType::NegatedAllocatedFalse,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and_not result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+
+                    (
+                        OperandType::NegatedAllocatedTrue,
+                        OperandType::True,
+                        Boolean::Constant(false),
+                    ) => {}
+                    (OperandType::NegatedAllocatedTrue, OperandType::False, Boolean::Is(ref v)) => {
+                        assert!(cs.get("a/boolean") == Field::one());
+                        assert_eq!(v.value, Some(true));
+                    }
+                    (
+                        OperandType::NegatedAllocatedTrue,
+                        OperandType::AllocatedTrue,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and_not result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (
+                        OperandType::NegatedAllocatedTrue,
+                        OperandType::AllocatedFalse,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and_not result") == Field::one());
+                        assert_eq!(v.value, Some(true));
+                    }
+                    (
+                        OperandType::NegatedAllocatedTrue,
+                        OperandType::NegatedAllocatedTrue,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and result") == Field::one());
+                        assert_eq!(v.value, Some(true));
+                    }
+                    (
+                        OperandType::NegatedAllocatedTrue,
+                        OperandType::NegatedAllocatedFalse,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+
+                    (
+                        OperandType::NegatedAllocatedFalse,
+                        OperandType::True,
+                        Boolean::Constant(false),
+                    ) => {}
+                    (
+                        OperandType::NegatedAllocatedFalse,
+                        OperandType::False,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("a/boolean") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (
+                        OperandType::NegatedAllocatedFalse,
+                        OperandType::AllocatedTrue,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and_not result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (
+                        OperandType::NegatedAllocatedFalse,
+                        OperandType::AllocatedFalse,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and_not result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (
+                        OperandType::NegatedAllocatedFalse,
+                        OperandType::NegatedAllocatedTrue,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+                    (
+                        OperandType::NegatedAllocatedFalse,
+                        OperandType::NegatedAllocatedFalse,
+                        Boolean::Is(ref v),
+                    ) => {
+                        assert!(cs.get("and result") == Field::zero());
+                        assert_eq!(v.value, Some(false));
+                    }
+
+                    _ => {
+                        panic!(
+                            "unexpected behavior at {:?} NOR {:?} = {:?}",
                             first_operand, second_operand, c,
                         );
                     }
